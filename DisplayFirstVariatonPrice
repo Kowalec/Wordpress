@@ -1,0 +1,22 @@
+<?php
+/*
+Plugin Name: Display First Variation Price
+Description: This plugin displays the price of the first variation of a product, with one category
+Version: 1.0
+Author: Kowalec Sp. z o.o. | Sebastian Kowalec
+*/
+
+add_filter( 'woocommerce_variable_price_html', 'display_first_variation_price', 10, 2 );
+function display_first_variation_price( $price, $product ) {
+    if( has_term( 'slug-your-cattegory', 'product_cat', $product->get_id() ) ) {
+        $available_variations = $product->get_available_variations();
+        if( !empty($available_variations) ) {
+            $first_variation = reset($available_variations);
+            $price = wc_price($first_variation['display_price']);
+        } else {
+            $price = wc_price($product->get_price());
+        }
+        return "Text before price " . $price;
+    }
+    return $price;
+}
