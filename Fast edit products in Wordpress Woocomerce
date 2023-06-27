@@ -1,0 +1,360 @@
+//Hi, this is file for fast edit products in WooComerce, file add in main instataltion dir.
+//Cześć, to jest plik dla szybkiej edycji produktów w woocomerce, plik dodaj w głównym katalogu instalacji.
+
+<?php
+require_once('wp-load.php');
+
+// Pobieranie listy produktów
+function get_products() {
+    $args = array(
+        'post_type' => 'product',
+        'posts_per_page' => -1,
+    );
+
+    $query = new WP_Query($args);
+    $products = array();
+
+    while ($query->have_posts()) {
+        $query->the_post();
+        $product_id = get_the_ID();
+        $product = wc_get_product($product_id);
+
+        $product_data = array(
+            'id' => $product_id,
+            'image' => get_the_post_thumbnail_url($product_id),
+            'name' => get_the_title(),
+            'description' => get_the_content(),
+            'stock' => $product->get_stock_quantity(),
+            'price' => $product->get_regular_price(),
+            'categories' => wp_get_post_terms($product_id, 'product_cat', array('fields' => 'names')),
+            'track_stock' => get_post_meta($product_id, '_manage_stock', true) === 'yes',
+            'stock_status' => $product->get_stock_status(),
+            'weight' => $product->get_weight(),
+            'dimensions' => array(
+                'length' => $product->get_length(),
+                'width' => $product->get_width(),
+                'height' => $product->get_height()
+            )
+        );
+
+        $products[] = $product_data;
+    }
+
+    wp_reset_postdata();
+
+    return $products;
+}
+
+// Aktualizacja produktów
+function update_products($products) {
+    foreach ($products as $product) {
+        $product_id = $product['id'];
+
+        // Aktualizacja nazwy produktu
+        $name = sanitize_text_field($product['name']);
+        wp_update_post(array('ID' => $product_id, 'post_title' => $name));
+
+        // Aktualizacja opisu produktu
+        $description = wp_kses_post($product['description']);
+        wp_update_post(array('ID' => $product_id, 'post_content' => $description));
+
+        // Aktualizacja stanu magazynowego
+        $stock = absint($product['stock']);
+        update_post_meta($product_id, '_stock', $stock);
+        update_post_meta($product_id, '_manage_stock', $product['track_stock'] ? 'yes' : 'no');
+        update_post_meta($product_id, '_stock_status', $product['stock_status']);
+
+        // Aktualizacja ceny
+        $price = wc_format_decimal($product['price']);
+        update_post_meta($product_id, '_regular_price', $price);
+
+        // Aktualizacja zdjęcia
+        if ($_FILES && isset($_FILES['product_image']) && $_FILES['product_image']['error'] == 0) {
+            $image = $_FILES['product_image'];
+            $upload = wp_upload_bits($image['name'], null, file_get_contents($image['tmp_name']));
+
+            if (!$upload['error']) {
+                $file_path = $upload['file'];
+                $file_name = basename($file_path);
+
+                $attachment = array(
+                    'post_mime_type' => $upload['type'],
+                    'post_title' => preg_replace('/\.[^.]+$/', '', $file_name),
+                    'post_content' => '',
+                    'post_status' => 'inherit'
+                );
+
+                $attach_id = wp_insert_attachment($attachment, $file_path, $product_id);
+                $attach_data = wp_generate_attachment_metadata($attach_id, $file_path);
+                wp_update_attachment_metadata($attach_id, $attach_data);
+
+                set_post_thumbnail($product_id, $attach_id);
+            }
+        }
+
+        // Aktualizacja kategorii
+        if (isset($product['categories']) && is_array($product['categories'])) {
+            wp_set_post_terms($product_id, $product['categories'], 'product_cat');
+        }
+
+        // Aktualizacja wagi
+        $weight = wc_format_decimal($product['weight']);
+        update_post_meta($product_id, '_weight', $weight);
+
+        // Aktualizacja wymiarów
+        $length = wc_format_decimal($product['dimensions']['length']);
+        update_post_meta($product_id, '_length', $length);
+
+        $width = wc_format_decimal($product['dimensions']['width']);
+        update_post_meta($product_id, '_width', $width);
+
+        $height = wc_format_decimal($product['dimensions']['height']);
+        update_post_meta($product_id, '_height', $height);
+    }
+}
+
+// Obsługa formularza
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['products']) && !empty($_POST['products'])) {
+    $products_data = $_POST['products'];
+    $products = array();
+
+    // Przetwarzanie danych produktów
+    foreach ($products_data as $product_data) {
+        $product_id = absint($product_data['id']);
+        $image = $product_data['image'];
+        $name = sanitize_text_field($product_data['name']);
+        $description = wp_kses_post($product_data['description']);
+        $stock = absint($product_data['stock']);
+        $price = wc_format_decimal($product_data['price']);
+        $categories = isset($product_data['categories']) ? (array) $product_data['categories'] : array();
+        $track_stock = isset($product_data['track_stock']) ? (bool) $product_data['track_stock'] : false;
+        $stock_status = isset($product_data['stock_status']) ? sanitize_text_field($product_data['stock_status']) : 'instock';
+        $weight = isset($product_data['weight']) ? wc_format_decimal($product_data['weight']) : '';
+        $length = isset($product_data['length']) ? wc_format_decimal($product_data['length']) : '';
+        $width = isset($product_data['width']) ? wc_format_decimal($product_data['width']) : '';
+        $height = isset($product_data['height']) ? wc_format_decimal($product_data['height']) : '';
+
+        $product = array(
+            'id' => $product_id,
+            'image' => $image,
+            'name' => $name,
+            'description' => $description,
+            'stock' => $stock,
+            'price' => $price,
+            'categories' => $categories,
+            'track_stock' => $track_stock,
+            'stock_status' => $stock_status,
+            'weight' => $weight,
+            'dimensions' => array(
+                'length' => $length,
+                'width' => $width,
+                'height' => $height
+            )
+        );
+
+        $products[] = $product;
+    }
+
+    // Aktualizacja produktów
+    update_products($products);
+}
+
+// Pobieranie listy produktów
+$products = get_products();
+
+// Pobieranie listy kategorii
+$categories = get_terms(array(
+    'taxonomy' => 'product_cat',
+    'hide_empty' => false,
+));
+
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Szybka edycja produktów</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/css/bootstrap.min.css">
+    <style>
+        .product-image {
+            max-width: 100px;
+            max-height: 100px;
+            object-fit: cover;
+            border-radius: 5px;
+        }
+
+        .description-textarea {
+            height: 300px;
+        }
+
+        .small-input {
+            width: 70px;
+        }
+
+        .large-input {
+            width: 200px;
+        }
+
+        .form-group label {
+            font-size: 14px;
+        }
+
+        .sticky-row {
+            position: sticky;
+            top: 0;
+            z-index: 999;
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <h1 class="mt-5 mb-4">Szybka edycja produktów</h1>
+        <div class="table-responsive">
+            <table class="table table-bordered">
+                <thead>
+                    <tr class="sticky-row">
+                        <th>Zdjęcie</th>
+                        <th class="w-25">Nazwa produktu</th>
+                        <th class="w-50">Opis</th>
+                        <th class="small-input">Stan mag.</th>
+                        <th class="small-input">Cena</th>
+                        <th>Kategoria</th>
+                        <th class="small-input">Śledź</th>
+                        <th class="small-input">Mag.</th>
+                        <th class="small-input">Waga</th>
+                        <th>Wymiary (dł. / szer. / wys.)</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($products as $product) : ?>
+                        <tr>
+                            <td>
+                                <?php if ($product['image']) : ?>
+                                    <img src="<?php echo $product['image']; ?>" class="product-image">
+                                    <div class="form-group mt-2">
+                                        <button type="button" class="btn btn-sm btn-secondary" data-toggle="modal" data-target="#changeImageModal<?php echo $product['id']; ?>">Zmień zdjęcie</button>
+                                    </div>
+                                <?php else : ?>
+                                    <div class="form-group">
+                                        <button type="button" class="btn btn-sm btn-secondary" data-toggle="modal" data-target="#addImageModal<?php echo $product['id']; ?>">Dodaj zdjęcie</button>
+                                    </div>
+                                <?php endif; ?>
+                            </td>
+                            <td>
+                                <input type="hidden" name="products[<?php echo $product['id']; ?>][id]" value="<?php echo $product['id']; ?>">
+                                <input type="text" class="form-control form-control-sm" name="products[<?php echo $product['id']; ?>][name]" value="<?php echo $product['name']; ?>">
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <?php wp_editor($product['description'], 'product_description_' . $product['id'], array('textarea_name' => 'products[' . $product['id'] . '][description]', 'media_buttons' => true, 'quicktags' => true, 'editor_height' => 200)); ?>
+                                </div>
+                            </td>
+                            <td>
+                                <input type="number" class="form-control form-control-sm" name="products[<?php echo $product['id']; ?>][stock]" value="<?php echo $product['stock']; ?>">
+                            </td>
+                            <td>
+                                <input type="number" step="0.01" class="form-control form-control-sm small-input" name="products[<?php echo $product['id']; ?>][price]" value="<?php echo $product['price']; ?>">
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <select class="form-control form-control-sm" name="products[<?php echo $product['id']; ?>][categories][]" multiple>
+                                        <option value="">Wybierz kategorie</option>
+                                        <?php foreach ($categories as $category) : ?>
+                                            <option value="<?php echo $category->term_id; ?>" <?php if (in_array($category->term_id, $product['categories'])) echo 'selected'; ?>><?php echo $category->name; ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <input type="checkbox" name="products[<?php echo $product['id']; ?>][track_stock]" <?php if ($product['track_stock']) echo 'checked'; ?>>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <select class="form-control form-control-sm" name="products[<?php echo $product['id']; ?>][stock_status]">
+                                        <option value="instock" <?php if ($product['stock_status'] === 'instock') echo 'selected'; ?>>Na stanie</option>
+                                        <option value="outofstock" <?php if ($product['stock_status'] === 'outofstock') echo 'selected'; ?>>Brak w magazynie</option>
+                                        <option value="onbackorder" <?php if ($product['stock_status'] === 'onbackorder') echo 'selected'; ?>>Na zamówienie</option>
+                                    </select>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <input type="number" step="0.01" class="form-control form-control-sm small-input" name="products[<?php echo $product['id']; ?>][weight]" value="<?php echo $product['weight']; ?>">
+                                </div>
+                            </td>
+                            <td>
+                                <div class="form-group">
+                                    <input type="number" step="0.01" class="form-control form-control-sm small-input" name="products[<?php echo $product['id']; ?>][dimensions][length]" value="<?php echo $product['dimensions']['length']; ?>">
+                                </div>
+                                <div class="form-group">
+                                    <input type="number" step="0.01" class="form-control form-control-sm small-input" name="products[<?php echo $product['id']; ?>][dimensions][width]" value="<?php echo $product['dimensions']['width']; ?>">
+                                </div>
+                                <div class="form-group">
+                                    <input type="number" step="0.01" class="form-control form-control-sm small-input" name="products[<?php echo $product['id']; ?>][dimensions][height]" value="<?php echo $product['dimensions']['height']; ?>">
+                                </div>
+                            </td>
+                        </tr>
+                        <?php if ($product['image']) : ?>
+                            <!-- Modal for changing image -->
+                            <div class="modal fade" id="changeImageModal<?php echo $product['id']; ?>" tabindex="-1" role="dialog" aria-labelledby="changeImageModalLabel<?php echo $product['id']; ?>" aria-hidden="true">
+                                <div class="modal-dialog" role="document">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title" id="changeImageModalLabel<?php echo $product['id']; ?>">Zmień zdjęcie</h5>
+                                            <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                                <span aria-hidden="true">&times;</span>
+                                            </button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="form-group">
+                                                <input type="file" name="product_image" class="form-control-file">
+                                                <small class="form-text text-muted">Zmień zdjęcie</small>
+                                            </div>
+                                        </div>
+                                        <div class="modal-footer">
+                                            <button type="button" class="btn btn-secondary" data-dismiss="modal">Anuluj</button>
+                                            <button type="button" class="btn btn-primary">Zapisz</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endif; ?>
+                        <!-- Modal for adding image -->
+                        <div class="modal fade" id="addImageModal<?php echo $product['id']; ?>" tabindex="-1" role="dialog" aria-labelledby="addImageModalLabel<?php echo $product['id']; ?>" aria-hidden="true">
+                            <div class="modal-dialog" role="document">
+                                <div class="modal-content">
+                                    <div class="modal-header">
+                                        <h5 class="modal-title" id="addImageModalLabel<?php echo $product['id']; ?>">Dodaj zdjęcie</h5>
+                                        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                                            <span aria-hidden="true">&times;</span>
+                                        </button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="form-group">
+                                            <input type="file" name="product_image" class="form-control-file">
+                                            <small class="form-text text-muted">Dodaj zdjęcie</small>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-secondary" data-dismiss="modal">Anuluj</button>
+                                        <button type="button" class="btn btn-primary">Zapisz</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <div class="text-center">
+            <button type="submit" class="btn btn-primary btn-lg btn-block">Aktualizuj</button>
+        </div>
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@1.16.1/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.0/js/bootstrap.min.js"></script>
+</body>
+</html>
