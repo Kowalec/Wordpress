@@ -1,0 +1,147 @@
+//Small scipt for mass add product's from list for Woocomerce
+//Mały skrypt do dodawania masowego produktów z listy
+
+<?php
+require_once('wp-load.php');
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dodawanie produktów do sklepu</title>
+    <style>
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f8f8f8;
+            font-family: Arial, sans-serif;
+        }
+        
+        h1 {
+            text-align: center;
+        }
+        
+        h2 {
+            margin-top: 30px;
+        }
+        
+        ul {
+            padding-left: 20px;
+        }
+        
+        label {
+            display: block;
+            font-weight: bold;
+            margin-top: 20px;
+        }
+        
+        textarea {
+            width: 100%;
+            resize: vertical;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background-color: #4caf50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        
+        .error {
+            color: red;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Dodawanie produktów do sklepu</h1>
+        
+        <?php
+        // Funkcja do dodawania produktów
+        function add_products($product_list) {
+            global $wpdb;
+            
+            $products_added = array(); // Tablica na dodane produkty
+            
+            // Przetwarzanie listy produktów
+            $lines = explode("\n", $product_list);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if (!empty($line)) {
+                    $sku = sanitize_title($line); // Generowanie SKU na podstawie tytułu
+                    
+                    // Sprawdzenie, czy produkt o podanym SKU już istnieje
+                    $existing_product_id = $wpdb->get_var($wpdb->prepare("SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_sku' AND meta_value = %s", $sku));
+                    
+                    if (!$existing_product_id) {
+                        // Tworzenie nowego produktu
+                        $new_product = array(
+                            'post_title' => $line,
+                            'post_content' => '',
+                            'post_status' => 'publish',
+                            'post_type' => 'product'
+                        );
+                        
+                        // Wstawienie nowego produktu do bazy danych
+                        $new_product_id = wp_insert_post($new_product);
+                        
+                        // Ustawienie ceny na 0 zł
+                        update_post_meta($new_product_id, '_price', '0');
+                        
+                        // Ustawienie stanu magazynowego na 0
+                        update_post_meta($new_product_id, '_stock', '0');
+                        
+                        // Dodanie SKU
+                        update_post_meta($new_product_id, '_sku', $sku);
+                        
+                        $products_added[] = $line;
+                    }
+                }
+            }
+            
+            return $products_added;
+        }
+        
+        // Sprawdzenie połączenia z bazą danych
+        function check_database_connection() {
+            global $wpdb;
+            $result = $wpdb->query("SELECT 1 FROM $wpdb->posts LIMIT 1");
+            return ($result !== false);
+        }
+        
+        // Obsługa formularza
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['product_list']) && !empty($_POST['product_list'])) {
+            // Sprawdzenie połączenia z bazą danych
+            $database_connection = check_database_connection();
+            
+            // Dodanie produktów
+            $product_list = $_POST['product_list'];
+            $added_products = add_products($product_list);
+        }
+        ?>
+        
+        <?php if (isset($added_products) && count($added_products) > 0) : ?>
+            <h2>Nowo dodane produkty:</h2>
+            <ul>
+                <?php foreach ($added_products as $product) : ?>
+                    <li><?php echo $product; ?></li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+        
+        <form method="POST" action="">
+            <label for="product_list">Wklej listę produktów:</label>
+            <textarea id="product_list" name="product_list" rows="10" required></textarea>
+            <button type="submit">Dodaj produkty</button>
+        </form>
+        
+        <?php if (!$database_connection) : ?>
+            <div class="error">Nie można połączyć się z bazą danych.</div>
+        <?php endif; ?>
+    </div>
+</body>
+</html>
